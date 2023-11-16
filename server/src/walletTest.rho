@@ -1,0 +1,40 @@
+new walletTest, stdout(`rho:io:stdout`), ret, walletCh, deployerId(`rho:rchain:deployerId`) in {
+    stdout!("wallet test!")|
+    new walletAddrCh, tCh in {
+        @{"walletStore"}!("getAddr", *deployerId, *walletAddrCh)|
+        for(@walletAddr <- walletAddrCh) {
+            stdout!(("addr: ",walletAddr))|
+            @{"walletStore"}!("findOrCreate", *deployerId, *walletCh)|
+            for(@walletGet <- walletCh) {
+                match walletGet {
+                    (true, wallet) => {
+                        stdout!(("Test get a wallet", wallet))|
+                        new balanceCh in {
+                            @wallet!("checkBalance", *deployerId, *balanceCh)|
+                            for(@balance <- balanceCh) {
+                                stdout!(("balance ", balance))
+                            }
+                        }|
+                        new transferCh in {
+                            @wallet!("transfer", *deployerId, "1111JGfQC3UTgQLbf4bt7DA2rjNDMAhAac7Xz8YbxYyGbRNkLsAiu", 100, "2023", *transferCh)|
+                            for(@transferRet <- transferCh) {
+                                stdout!(("trans ret ", transferRet))|
+                                new transCheckCh in {
+                                    @wallet!("checkTrans", *deployerId, *transCheckCh)|
+                                    for(@trans <- transCheckCh) {
+                                        stdout!(("check trans ",trans))|
+                                        walletTest!(("check trans ",trans))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    (false, msg) => {
+                        stdout!((msg, "some thing wrong"))|
+                        walletTest!((msg, "some thing wrong"))
+                    }
+                }
+            }
+        }
+    }
+}

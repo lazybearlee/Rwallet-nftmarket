@@ -1,0 +1,131 @@
+new nftTest, stdout(`rho:io:stdout`), ret, walletCh , deployerId(`rho:rchain:deployerId`) in {
+    stdout!("nft test!")|
+    new createRet,createRetAgain in {
+        @{"nftMarket"}!("createAccount", *deployerId ,*createRet)|
+        //@{"nftMarket"}!("createAccount", *createRetAgain)|
+        for(@ret <- createRet) {
+            stdout!(("ret:",ret))|
+            new uploadCh,uploadChs,uploadCht in {
+                @{"nftMarket"}!("upload", *deployerId ,"100", "100", *uploadCh)|
+                @{"nftMarket"}!("upload", *deployerId ,"200", "200", *uploadChs)|
+                // @{"nftMarket"}!("upload", "300", "300", *uploadCht)|
+                for(@upload <- uploadCh) {
+                    stdout!(("upload:",upload))
+                    |
+                    match upload  {
+                        (true,NftId) => {
+                            stdout!(("NftId:",NftId))
+                            |
+                            new releaseCh in{
+                                @{"nftMarket"}!("release", *deployerId ,NftId, 100, *releaseCh)|
+                                for(@release <- releaseCh){
+                                    stdout!(("release:",release))
+                                    |
+                                    new getCh in {
+                                        @{"nftMarket"}!("getAllNFTinMarket", *getCh)|
+                                        for(@get <- getCh) {
+                                            stdout!(("get:",get))|
+                                            new getNow in {
+                                                @{"nftMarket"}!("getAllNFTinAccount", *deployerId ,*getNow)|
+                                                for(@getmy <- getNow){
+                                                    stdout!(("getMy0:",getmy))
+                                                }
+                                            }  
+                                            |
+                                            new pulloffCh in{
+                                                @{"nftMarket"}!("pulloff", *deployerId ,NftId, *pulloffCh)|
+                                                for(@pulloff <- pulloffCh) {
+                                                    stdout!(("pulloff:",pulloff))|
+                                                    new getChh in {
+                                                        @{"nftMarket"}!("getAllNFTinMarket", *getChh)|
+                                                        for(@geth <- getChh) {
+                                                            stdout!(("geth:",geth))
+                                                        }
+                                                    }
+                                                    |
+                                                    new getMy in {
+                                                        @{"nftMarket"}!("getAllNFTinAccount", *deployerId ,*getMy)|
+                                                        for(@get <- getMy){
+                                                            stdout!(("getMy:",get))
+                                                        }
+                                                    }    
+                                                }
+                                            } 
+                                        }
+                                    }
+                                    // |
+                                    // for(@rett <- createRetAgain) {
+                                    //     stdout!(("rett:",rett))|
+                                    //     new buyNft in {
+                                    //         @{"nftMarket"}!("buy", *deployerId ,from, id, ret)
+                                    //     }
+                                    // }
+
+                                }
+                            }
+                        }
+                    }
+                }
+                |
+                for(@uploads <- uploadChs) {
+                    stdout!(("uploads:",uploads))|
+                    match uploads  {
+                        (true,NftIds) => {
+                            // stdout!(("NftIds:",NftIds))
+                            // |
+                            new releaseChs in{
+                                @{"nftMarket"}!("release", *deployerId ,NftIds, 100, *releaseChs)|
+                                for(@releases <- releaseChs){
+                                    stdout!(("releases:",releases))|
+                                    new getChs in {
+                                        @{"nftMarket"}!("getAllNFTinMarket", *getChs)|
+                                        for(@gets <- getChs) {
+                                            stdout!(("gets:",gets))
+                                        }
+                                    }|
+                                    new getMy in {
+                                        @{"nftMarket"}!("getAllNFTinAccount", *deployerId ,*getMy)|
+                                        for(@get <- getMy){
+                                            stdout!(("getMy2:",get))
+                                        }
+                                    } 
+                                    |
+                                    new getNFTPriceCh in{
+                                        stdout!(("Id:",NftIds))|
+                                        @{"nftMarket"}!("getNFTPrice", NftIds,*getNFTPriceCh) |
+                                        for(@getNFTPrice <- getNFTPriceCh){
+                                            stdout!(("getNFTPrice:",getNFTPrice))
+                                        }
+                                    }   
+                                }
+                            }
+                        }
+                    } 
+                    
+                }
+                // |
+                // for(@uploadt <- uploadCht) {
+                //     stdout!(("uploadt:",uploadt))|
+                //     match uploadt  {
+                //         (true,NftIdt) => {
+                //             // stdout!(("NftIdt:",NftIdt))
+                //             // |
+                //             new releaseCht in{
+                //                 @{"nftMarket"}!("release", NftIdt, 100, *releaseCht)|
+                //                 for(@releaset <- releaseCht){
+                //                     stdout!(("releaset:",releaset))|
+                //                     new getCht in {
+                //                         @{"nftMarket"}!("getAllNFTinMarket", *getCht)|
+                //                         for(@gett <- getCht) {
+                //                             stdout!(("gett:",gett))
+                //                         }
+                //                     }
+                //                 }
+                //             }
+                //         }
+                //     } 
+                // }
+            }
+        }
+    }
+}

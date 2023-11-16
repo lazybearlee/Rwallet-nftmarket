@@ -1,0 +1,111 @@
+new  
+    lookup(`rho:registry:lookup`), 
+    insertArbitrary(`rho:registry:insertArbitrary`), 
+    stdout(`rho:io:stdout`),
+    keccak256Hash(`rho:crypto:keccak256Hash`),
+    transactionsList
+in {
+    transactionsList!([({
+            "from":"0",
+            "to":"0",
+            "amount":"",
+            "term":"",
+            "timeStamp":""
+        })])
+    |
+    contract @{"transaction"}(@"managerList", deployerId, transListCh, ret) = {
+        new checkCh in {
+            @{"walletStore"}!("managerCheck", *deployerId, *checkCh)|
+            for(@check <- checkCh) {
+                match check {
+                    (true, _) => {
+                        for(@transList <- transactionsList) {
+                            transactionsList!(transList)|
+                            transListCh!(transList)|
+                            ret!(check)
+                        }
+                    }
+                    (false, msg) => {
+                        ret!(check)
+                    }
+                }
+            }
+        }
+    }
+    |
+    contract @{"transaction"}(@"init", deployerId, ret) = {
+        new checkCh in {
+            @{"walletStore"}!("managerCheck", *deployerId, *checkCh)|
+            for(@check <- checkCh) {
+                match check {
+                    (true, _) => {
+                        for(_ <- transactionsList) {
+                            transactionsList!([({
+                                "from":"0",
+                                "to":"0",
+                                "amount":"",
+                                "term":"",
+                                "timeStamp":""
+                            })])
+                            |
+                            ret!(check)
+                        }
+                    }
+                    (false, msg) => {
+                        ret!(check)
+                    }
+                }
+            }
+        }
+    }
+    |
+    new transNumCh in {
+        transNumCh!(0)|
+        stdout!("transaction deploy")|
+        contract @{"transaction"}(@"check", ret) = {
+            for (@transactions <<- transactionsList){
+                ret!(transactions)|
+                stdout!(transactions)
+            }
+        }
+        |
+        contract @{"transaction"}(@"add", deployerId, to, amount, term, timeStamp, ret) = {
+            new walletCh in {
+                stdout!("adding trans")|
+                @{"walletStore"}!("findOrCreate", *deployerId, *walletCh)|
+                for(@(true,wallet) <- walletCh) {
+                    new transferRetCh in {
+                        @wallet!("transfer", *deployerId, *to, *amount, *timeStamp, *transferRetCh)|
+                        for(transferRet <- transferRetCh) {
+                            match *transferRet {
+                                (true, _) => {
+                                    for (@transactions <- transactionsList){
+                                        new addrCh in {
+                                            @{"walletStore"}!("getAddr", *deployerId, *addrCh)|
+                                            for(addr <- addrCh) {
+                                                transactionsList!(
+                                                    transactions++[({
+                                                        "from":*addr,
+                                                        "to":*to,
+                                                        "amount":*amount,
+                                                        "term":*term,
+                                                        "timeStamp":*timeStamp
+                                                    })]
+                                                )
+                                                |
+                                                ret!((true, "Add successfuly!"))
+                                            }
+                                        }
+                                    }
+                                }
+                                (false, _) => {
+                                    ret!((false, "transerError"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,486 @@
+new  
+    lookup(`rho:registry:lookup`), 
+    insertArbitrary(`rho:registry:insertArbitrary`), 
+    stdout(`rho:io:stdout`),
+    keccak256Hash(`rho:crypto:keccak256Hash`),
+    NFTAccountMapStore,
+    MarketMapStore,
+    changeState
+in {
+    NFTAccountMapStore!({
+        "OwnerAddr":({
+            "id":({
+                "term":"data",
+                "info":"",
+                "state":false
+            })
+        })
+    })
+    |
+    MarketMapStore!({
+        "id":({
+            "Owner":"",
+            "price":0,
+            "nft":({})
+        })
+    })
+    |
+    contract @{"nftMarket"}(@"managerMap", deployerId, accountMapS, marketMapS, ret) = {
+        new checkCh in {
+            @{"walletStore"}!("managerCheck", *deployerId, *checkCh)|
+            for(@check <- checkCh) {
+                match check {
+                    (true, _) => {
+                        for(@accountMap <- NFTAccountMapStore & @market <- MarketMapStore) {
+                            NFTAccountMapStore!(accountMap)|
+                            MarketMapStore!(market)|
+                            accountMapS!(accountMap)|
+                            marketMapS!(market)|
+                            ret!(check)
+                        }
+                    }
+                    (false, msg) => {
+                        ret!(check)
+                    }
+                }
+            }
+        }
+    }
+    |
+    contract @{"nftMarket"}(@"init", deployerId, ret) = {
+        new checkCh in {
+            @{"walletStore"}!("managerCheck", *deployerId, *checkCh)|
+            for(@check <- checkCh) {
+                match check {
+                    (true, _) => {
+                        for(@accountMap <- NFTAccountMapStore & @market <- MarketMapStore) {
+                            NFTAccountMapStore!({
+                                "OwnerAddr":({
+                                    "id":({
+                                        "term":"data",
+                                        "info":"",
+                                        "state":false
+                                    })
+                                })
+                            })
+                            |
+                            MarketMapStore!({
+                                "id":({
+                                    "Owner":"",
+                                    "price":0,
+                                    "nft":({})
+                                })
+                            })
+                            |
+                            ret!(check)
+                        }
+                    }
+                    (false, msg) => {
+                        ret!(check)
+                    }
+                }
+            }
+        }
+    }
+    |
+    //创建NFT账户，获取账户，为空继续创建，首先创建钱包
+    contract @{"nftMarket"}(@"createAccount", deployerId, ret) = {
+        new NFTAccountCh, newNFTAccountMapCh in {
+            for(@NFTAccountMap <- NFTAccountMapStore) {
+                new walletAddrCh in {
+                    @{"walletStore"}!("getAddr", *deployerId, *walletAddrCh)|
+                    for(@walletAddr <- walletAddrCh) {
+                        NFTAccountCh!(NFTAccountMap.get(walletAddr))|
+                        for(@account <- NFTAccountCh) {
+                            if (account != Nil) {
+                                NFTAccountMapStore!(NFTAccountMap)|
+                                ret!((false, "Account has been created."))
+                            }
+                            else {
+                                new walletCh in {
+                                    @{"walletStore"}!("findOrCreate", *deployerId, *walletCh)|
+                                    for(@ans <- walletCh) {
+                                        match ans {
+                                            (true, wallet) => {
+                                                newNFTAccountMapCh!(NFTAccountMap.set(walletAddr, ({})))|
+                                                for(@newAccountMap <- newNFTAccountMapCh) {
+                                                    NFTAccountMapStore!(newAccountMap)|
+                                                    ret!((true, "New Account created."))
+                                                }
+                                            }
+                                            (false, msg) => {
+                                                NFTAccountMapStore!(NFTAccountMap)|
+                                                ret!((false, "Something wrong", msg))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } 
+                }
+            }
+        }
+    }
+    |
+    // 上传NFT, 由deployer上传一个NFT
+    contract @{"nftMarket"}(@"upload", deployerId, term, info, ret) = {
+        new uploadCh, newNFTAccountMapCh, NFTAccountCh, newNFTCh, addressCh in {
+            // newNFTCh!({"term":*term, "info":*info})|
+            for(@NFTAccountMap <- NFTAccountMapStore) {
+                @{"walletStore"}!("getAddr", *deployerId, *addressCh)|
+                for(@addr <- addressCh) {
+                    NFTAccountCh!(NFTAccountMap.get(addr))|
+                    for(@NFTAccount <- NFTAccountCh) {
+                        if (NFTAccount == Nil) {
+                            ret!((false, addr, "Account not created."))|
+                            NFTAccountMapStore!(NFTAccountMap)
+                        }
+                        else {
+                            newNFTCh!({"term":*term, "info":*info,"state":false})|
+                            for(@newNFT <- newNFTCh) {
+                                new accountCh, NFTIdCh in {
+                                    keccak256Hash!(*term.hexToBytes(), *NFTIdCh)|
+                                    for(@NFTId <- NFTIdCh) {
+                                        accountCh!(NFTAccount.set(NFTId, newNFT))|
+                                        for(@account <- accountCh) {
+                                            newNFTAccountMapCh!(NFTAccountMap.set(addr, account))|
+                                            for(@newNFTAccountMap <- newNFTAccountMapCh) {
+                                                stdout!(("Uploads:",NFTId))|
+                                                ret!((true, NFTId))|
+                                                NFTAccountMapStore!(newNFTAccountMap)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    |
+    // 交易NFT, 从对方钱包购入, from为对方钱包地址, id为对应NFTid
+    contract @{"nftMarket"}(@"buy", deployerId, from, id, timeStamp, ret) = {
+        for(@market <- MarketMapStore & @NFTAccountMap <- NFTAccountMapStore) {
+            new nftGetCh in {
+                nftGetCh!(market.get(*id))|
+                // stdout!(("market",market))|
+                // stdout!(("id",*id))|
+                for(@nft <- nftGetCh) {
+                    stdout!(("nft",nft))|
+                    match nft {
+                        ~Nil => {
+                            new walletAddrCh in {
+                                @{"walletStore"}!("getAddr", *deployerId, *walletAddrCh)|
+                                for(@walletAddr <- walletAddrCh) {
+                                    new fromAccountCh, toAccountCh in {
+                                        toAccountCh!(NFTAccountMap.get(walletAddr))|
+                                        for(@toAccount <- toAccountCh) {
+                                            stdout!(("toAccount",toAccount))|
+                                            if (toAccount != Nil) {
+                                                fromAccountCh!(NFTAccountMap.get(*from))|
+                                                for(@fromAccount <- fromAccountCh) {
+                                                    stdout!(("fromAccount",fromAccount))|
+                                                    if (fromAccount != Nil) {
+                                                        //找到钱包后先转账, 再从NFT账户进行转移, 最后再从市场中删除
+                                                        new tranferResultCh in {
+                                                            @{"transaction"}!("add", *deployerId, *from, nft.get("price"), *id, *timeStamp, *tranferResultCh)|
+                                                            // @wallet!("transfer", *deployerId, *from, nft.get("price"), *timeStamp, *tranferResultCh)|
+                                                            for(@tranferResult <- tranferResultCh) {
+                                                                stdout!(("tranferResult",tranferResult))|
+                                                                match tranferResult {
+                                                                    (true, _) => {
+                                                                        new newFromAccCh, newToAccCh in {
+                                                                            newFromAccCh!(fromAccount.delete(*id))|
+                                                                            newToAccCh!(toAccount.set(*id, (nft.get("nft")).set("state", false)))|
+                                                                            for(@newFromAcc <- newFromAccCh & @newToAcc <- newToAccCh) {
+                                                                                stdout!(("newFromAcc",newFromAcc))|
+                                                                                stdout!(("newToAcc",newToAcc))|
+                                                                                new newNFTAccountMapCh in {
+                                                                                    newNFTAccountMapCh!(NFTAccountMap.set(walletAddr, newToAcc))|
+                                                                                    for(@newNFTAccountMap <- newNFTAccountMapCh) {
+                                                                                        stdout!(("newNFTAccountMap0",newNFTAccountMap))|
+                                                                                        newNFTAccountMapCh!(newNFTAccountMap.set(*from, newFromAcc))|
+                                                                                        for(@newNFTAccountMap <- newNFTAccountMapCh) {
+                                                                                            stdout!(("newNFTAccountMap1",newNFTAccountMap))|
+                                                                                            MarketMapStore!(market.delete(*id))|
+                                                                                            NFTAccountMapStore!(newNFTAccountMap)|
+                                                                                            ret!((true,*id))
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    (false, err) => {
+                                                                        ret!((false, err))|
+                                                                        MarketMapStore!(market)|
+                                                                        NFTAccountMapStore!(NFTAccountMap)
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    else {
+                                                        ret!((false, "to account not created."))|
+                                                        MarketMapStore!(market)|
+                                                        NFTAccountMapStore!(NFTAccountMap)
+                                                    }
+                                                }
+                                            }
+                                            else {
+                                                ret!((false, "your account not created."))|
+                                                MarketMapStore!(market)|
+                                                NFTAccountMapStore!(NFTAccountMap)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Nil => {
+                            ret!((false, "nft not released."))|
+                            MarketMapStore!(market)|
+                            NFTAccountMapStore!(NFTAccountMap)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    |
+    // 发行NFT, id为名下NFT仓库中的NFTid
+    contract @{"nftMarket"}(@"release", deployerId, id, price, ret) = {
+        for(@market <- MarketMapStore & @NFTAccountMap <- NFTAccountMapStore) {
+            new walletAddrCh in {
+                @{"walletStore"}!("getAddr", *deployerId, *walletAddrCh)|
+                for(@walletAddr <- walletAddrCh) {
+                    new accountCh in {
+                        accountCh!(NFTAccountMap.get(walletAddr))|
+                        for(@account <- accountCh) {
+                            match account {
+                                ~Nil => {
+                                    new nftGetCh in {
+                                        nftGetCh!(account.get(*id))|
+                                        for(@nft <- nftGetCh) {
+                                            match nft {
+                                                ~Nil => {
+                                                    new newnft in{
+                                                        newnft!(nft.set("state",true))|
+                                                        for(@thisnft <- newnft){
+                                                            MarketMapStore!(market.set(*id, ({
+                                                                "Owner":walletAddr,
+                                                                "price":*price,
+                                                                "nft":thisnft
+                                                            }))) |
+                                                            new newAccountCh in{
+                                                                newAccountCh!(account.set(*id, thisnft))|
+                                                                for(@newAccount <- newAccountCh) {
+                                                                    new newAccountmapCh in{
+                                                                        newAccountmapCh!(NFTAccountMap.set(walletAddr,newAccount))|
+                                                                        for(@newAccountmap <- newAccountmapCh) {
+                                                                            NFTAccountMapStore!(newAccountmap)
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }                                                   
+                                                        |
+                                                        ret!((true, (*id, " was released.")))
+                                                    }
+                                                }
+                                                Nil => {
+                                                    MarketMapStore!(market)|
+                                                    NFTAccountMapStore!(NFTAccountMap)|
+                                                    ret!((false, "Dont hold this nft."))
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                Nil => {
+                                    MarketMapStore!(market)|
+                                    NFTAccountMapStore!(NFTAccountMap)|
+                                    ret!((false, "Account not found."))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    |
+    // 下架指定NFT
+    contract @{"nftMarket"}(@"pulloff", deployerId, id, ret) = {
+        for(@market <- MarketMapStore) {
+            new nftGetCh in {
+                nftGetCh!(market.get(*id))|
+                for(@nftGet <- nftGetCh) {
+                    stdout!(("nftGet",nftGet))|
+                    match nftGet {
+                        ~Nil => {
+                            new owneraddr in{
+                                @{"walletStore"}!("getAddr", *deployerId, *owneraddr)|
+                                for(@adddr <- owneraddr) {
+                                    if(adddr == nftGet.get("Owner")){
+                                        MarketMapStore!(market.delete(*id))|
+                                        ret!((true, *id))|
+                                        new return in{
+                                            changeState!( *deployerId, *id , false, *return)|
+                                            for(_ <- return){
+                                                stdout!("pullof!")
+                                            }
+                                            
+                                        }
+                                        
+                                    }else{
+                                        MarketMapStore!(market)|
+                                        ret!((false, (*id, " Without privileges")))|
+                                        stdout!("Without privileges!")
+                                    }
+                                }
+                            }    
+                        } 
+                        Nil => {
+                            MarketMapStore!(market)|
+                            ret!((false, (*id, " not on shelf.")))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    |
+    // 查询用户NFT, 获取名下所有NFT的列表
+    contract @{"nftMarket"}(@"getAllNFTinAccount", deployerId, ret) = {
+        for(@NFTAccountMap <- NFTAccountMapStore) {
+            new walletAddrCh in {
+                @{"walletStore"}!("getAddr", *deployerId, *walletAddrCh)|
+                for(@walletAddr <- walletAddrCh) {
+                    new accountCh in {
+                        accountCh!(NFTAccountMap.get(walletAddr))|
+                        for(@account <- accountCh) {
+                            if (account != Nil) {
+                                ret!((true, account.toList()))|
+                                NFTAccountMapStore!(NFTAccountMap)
+                            }
+                            else {
+                                ret!((false, "Account not found."))|
+                                NFTAccountMapStore!(NFTAccountMap)
+                            }
+                        }    
+                    }
+                }
+            }
+        }
+    }
+    |
+    // 查询市场NFT, 获取市场中所有NFT的列表
+    contract @{"nftMarket"}(@"getAllNFTinMarket", ret) = {
+        for(@market <- MarketMapStore) {
+            ret!((true, market.toList()))|
+            MarketMapStore!(market)
+        }
+    }
+    |
+    // 查询NFT价格, 获取名下对应NFT的价格
+    contract @{"nftMarket"}(@"getNFTPrice", id, ret) = {
+        for(@market <- MarketMapStore) {
+            new target in {
+                target!(market.get(*id))|
+                for (@newtarget <- target){
+                    match newtarget{
+                        ~Nil =>{
+                            stdout!("newtarget",newtarget)|
+                            ret!((true,newtarget.get("price")))
+                        }
+                        Nil =>{
+                            stdout!("Id not exist!")|
+                            ret!((false,(*id,"not exist!")))
+                        }
+                    }
+                }
+            }
+            |
+            MarketMapStore!(market)
+        }
+    }
+    |
+    // 查询NFT信息, 获取名下对应NFT的信息
+    contract @{"nftMarket"}(@"getNFTInfo", id, ret) = {
+        for(@market <- MarketMapStore) {
+            new target in {
+                target!(market.get(*id))|
+                for (@newtarget <- target){
+                    match newtarget{
+                        ~Nil =>{
+                            stdout!(("newtarget",newtarget))|
+                            stdout!(("price:",newtarget.get("price")))|
+                            ret!((true,newtarget.get("nft")))
+                        }
+                        Nil =>{
+                            stdout!("Id not exist!")|
+                            ret!((false,(*id,"not exist!")))
+                        }
+                    }
+                }
+            }
+            |
+            MarketMapStore!(market)
+        }
+    }
+    |
+    //change state of NFT
+    contract changeState( deployerId, id , newstate, ret) = {
+        for(@NFTAccountMap <- NFTAccountMapStore) {
+            new walletAddrCh in {
+                @{"walletStore"}!("getAddr",*deployerId, *walletAddrCh)|
+                for(@walletAddr <- walletAddrCh) {
+                    new accountCh in {
+                        accountCh!(NFTAccountMap.get(walletAddr))|
+                        for(@account <- accountCh){
+                            match account {
+                                ~Nil => {
+                                    new oldnftCh in{
+                                        oldnftCh!(account.get(*id))|
+                                        for(@oldnft <- oldnftCh){
+                                            match oldnft{
+                                                ~Nil =>{
+                                                    oldnftCh!(oldnft.set("state",*newstate))|
+                                                    for(@thisnft <- oldnftCh){
+                                                        accountCh!(account.set(*id, thisnft))|
+                                                        for(@newAccount <- accountCh) {
+                                                            new newNFTAccountMapCh in {
+                                                                newNFTAccountMapCh!(NFTAccountMap.set(walletAddr, newAccount))|
+                                                                for(@newNFTAccountMap <- newNFTAccountMapCh) {
+                                                                    NFTAccountMapStore!(newNFTAccountMap)|
+                                                                    ret!((true,"Change state"))
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                Nil =>{
+                                                    NFTAccountMapStore!(NFTAccountMap)|
+                                                    ret!((false,"NFT not exist in this account!"))
+                                                }
+                                            }
+                                            
+                                        }
+                                    }
+                                }
+                                Nil => {
+                                    NFTAccountMapStore!(NFTAccountMap)|
+                                    ret!((false,"Account not exist"))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

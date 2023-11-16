@@ -1,0 +1,366 @@
+new 
+    RevAddress(`rho:rev:address`), 
+    RevVaultCh, 
+    walletStore,
+    transactionStore,
+    messageStore,
+    _createWallet,
+    stdout(`rho:io:stdout`),
+    rl(`rho:registry:lookup`), 
+    keccak256Hash(`rho:crypto:keccak256Hash`)
+in { 
+    // 钱包
+    // 
+    walletStore!({})|
+    transactionStore!({})|
+    messageStore!({})
+    |
+    contract @{"walletStore"}(@"managerCheck", @deployerId, ret) = {
+        let @coopPubKey <- 
+        "045fe473dfecbf8f2c9043ce85380423f860e551c701078879f76b0ab5519074e5f1eac8ea7ebf4d503b36733e388a1774b01b3a8f93d2010a9b66202b97c45ed7".hexToBytes()
+        in {
+            new DeployerIdOps(`rho:rchain:deployerId:ops`), deployerPubKeyBytesCh in {
+                DeployerIdOps!("pubKeyBytes", deployerId, *deployerPubKeyBytesCh) |
+                for (@deployerPubKeyBytes <- deployerPubKeyBytesCh){
+                    if (deployerPubKeyBytes == coopPubKey){
+                        stdout!("check true")|
+                        ret!((true, Nil))
+                    } else {
+                        stdout!("check false")|
+                        ret!((false, "You have no permissions to manager wallet&nft dapp contract!"))
+                    }
+                }
+            }
+        }
+    } 
+    |
+    contract @{"walletStore"}(@"managerMap", deployerId, walletStoreRet, ret) = {
+        new checkCh in {
+            @{"walletStore"}!("managerCheck", *deployerId, *checkCh)|
+            for(@check <- checkCh) {
+                match check {
+                    (true, _) => {
+                        for(@walletMap <- walletStore) {
+                            walletStoreRet!(walletMap)|
+                            ret!(check)|
+                            walletStore!(walletMap)
+                        }
+                    }
+                    (false, msg) => {
+                        ret!(check)|
+                        walletStoreRet!(Nil)
+                    }
+                }
+            }
+        }
+    }
+    |
+    contract @{"walletStore"}(@"init", deployerId, ret) = {
+        new checkCh in {
+            @{"walletStore"}!("managerCheck", *deployerId, *checkCh)|
+            for(@check <- checkCh) {
+                // stdout!(check)|
+                match check {
+                    (true, _) => {
+                        for(_ <- walletStore & _ <- transactionStore & _ <- messageStore) {
+                            walletStore!({})|
+                            transactionStore!({})|
+                            messageStore!({})|
+                            ret!(check)
+                        }
+                    }
+                    (false, msg) => {
+                        ret!(check)
+                    }
+                }
+            }
+        }
+    }
+    |
+    contract @{"walletStore"}(@"findOrCreate", deployerId, ret) = {
+        new walletAddrCh in {
+            @{"walletStore"}!("getAddr", *deployerId, *walletAddrCh)|
+            for (@walletAddr <- walletAddrCh){
+                for (@walletMap <- walletStore){
+                    stdout!(("walletMap ",walletMap))|
+                    new walletCh in {
+                        walletCh!(walletMap.get(walletAddr))|
+                        for (@wallet <- walletCh){
+                            stdout!(("walletGet", wallet))|
+                            match wallet {
+                                ~Nil => {
+                                    stdout!(("Get a wallet!", wallet))|
+                                    ret!((true, wallet))|
+                                    walletStore!(walletMap)
+                                }
+                                Nil => {
+                                    stdout!("No wallet found! Now creating!")|
+                                    _createWallet!(walletAddr, *walletCh)|
+                                    for (@createRet <- walletCh){
+                                        match createRet {
+                                            (true, wallet) => {
+                                                stdout!(("Created a wallet!", wallet, walletMap.set(walletAddr, wallet)))|
+                                                ret!((true, wallet))|
+                                                walletStore!(walletMap.set(walletAddr, wallet))
+                                            }
+                                            (false, msg) => {
+                                                ret!((false, "Create error"))|
+                                                walletStore!(walletMap)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    |
+    //用于获取钱包地址
+    contract @{"walletStore"}(@"getAddr", deployerId, ret )= {
+        new 
+            DeployerIdOps(`rho:rchain:deployerId:ops`),
+            revAddrCh, deployerPubKeyBytesCh
+        in {
+            DeployerIdOps!("pubKeyBytes", *deployerId, *deployerPubKeyBytesCh) |
+            for (@deployerPubKeyBytes <- deployerPubKeyBytesCh) {
+                RevAddress!("fromPublicKey", deployerPubKeyBytes, *revAddrCh) |
+                for (@deployerRevAddress <- revAddrCh) {
+                    ret!(deployerRevAddress)
+                }
+            }
+        }
+    }
+    |
+    // 用于创建新钱包，封装方法
+    contract _createWallet(addr, walletCh) = {
+        stdout!("Begining creating new wallet!")|
+        new wallet in {
+            new vaultCh, walletTransactionsStore, makeCh, _makeMethod in {
+                rl!(`rho:rchain:revVault`, *RevVaultCh) |
+                for (@(_, RevVault) <- RevVaultCh) {
+                    @RevVault!("findOrCreate", *addr, *vaultCh)|
+                    for (@vaultRet <- vaultCh){
+                        match vaultRet {
+                            (true, vault) => {
+                                _makeMethod!(*makeCh)|
+                                stdout!("get a vault! Creating method!")|
+                                for (@makeRet <- makeCh){
+                                    stdout!("make success")|
+                                    walletCh!((makeRet, *wallet))
+                                }
+                            }
+                            (false, _) => {
+                                walletCh!(false, "Create Wrong")|
+                                stdout!("vault get wrong")
+                            }
+                        }
+                    }
+                }
+                |
+                contract _makeMethod(makeCh) = {
+                    makeCh!(true)|
+                    walletTransactionsStore!([].toList()) |
+                    contract wallet(@"checkBalance", deployerId, ret) = {
+                        new vaultCh, balanceCh in {
+                            rl!(`rho:rchain:revVault`, *RevVaultCh) |
+                            for(@(_, RevVault) <- RevVaultCh) {
+                                stdout!("checking balance") |
+                                new addrCh in {
+                                    @{"walletStore"}!("getAddr", *deployerId, *addrCh)|
+                                    for(addr <- addrCh) {
+                                        @RevVault!("findOrCreate", *addr, *vaultCh) |
+                                        for(@(true, vault) <- vaultCh) {
+                                            @vault!("balance", *balanceCh) |
+                                            for (@balance <- balanceCh) {
+                                                stdout!(("Balance is", balance))|
+                                                ret!((true, balance))
+                                            }
+                                        } 
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    |
+                    contract wallet(@"transfer", deployerId, to, amount, timeStamp, ret) = {
+                        new vaultCh, targetVaultCh, revVaultkeyCh in {
+                            rl!(`rho:rchain:revVault`, *RevVaultCh) |
+                            for (@(_, RevVault) <- RevVaultCh) {
+                                new addrCh in {
+                                    @{"walletStore"}!("getAddr", *deployerId, *addrCh)|
+                                    for(addr <- addrCh) {
+                                        @RevVault!("findOrCreate", *addr, *vaultCh) |
+                                        // make sure the target vault it created and the transfer would be done
+                                        @RevVault!("findOrCreate", *to, *targetVaultCh) |
+                                        @RevVault!("deployerAuthKey", *deployerId, *revVaultkeyCh) |
+                                        for (@(true, vault) <- vaultCh & key <- revVaultkeyCh & @(true, _) <- targetVaultCh) {
+
+                                            stdout!(("Beginning transfer of ", *amount, "to", *to)) |
+
+                                            new resultCh in {
+                                                @vault!("transfer", *to, *amount, *key, *resultCh) |
+                                                for (@result <- resultCh) {
+                                                    stdout!(("Finished transfer of ", *amount, "REV to", *to, "result was:", result))|
+                                                    match result {
+                                                        (true, _) => {
+                                                            //添加自己的交易记录
+                                                            for(@transList <- walletTransactionsStore) {
+                                                                walletTransactionsStore!(transList++[({
+                                                                    "from":*addr,
+                                                                    "to":*to,
+                                                                    "amount":*amount,
+                                                                    "timeStamp":*timeStamp
+                                                                })])|
+                                                                stdout!(("add from trans ",transList++[({
+                                                                    "from":*addr,
+                                                                    "to":*to,
+                                                                    "amount":*amount,
+                                                                    "timeStamp":*timeStamp
+                                                                })]))
+                                                            }
+                                                            |
+                                                            //添加其他人的交易记录
+                                                            for(@transToAddMap <- transactionStore) {
+                                                                stdout!(transToAddMap)|
+                                                                new transToAddListCh, newTransListCh in {
+                                                                    stdout!(("add others trans "))|
+                                                                    transToAddListCh!(transToAddMap.get(*to))|
+                                                                    for(@transToAddList <- transToAddListCh) {
+                                                                        if (transToAddList != Nil) {
+                                                                            newTransListCh!(transToAddList++[({
+                                                                                "from":*addr,
+                                                                                "to":*to,
+                                                                                "amount":*amount,
+                                                                                "timeStamp":*timeStamp
+                                                                            })])|
+                                                                            for(@newTransList <- newTransListCh) {
+                                                                                transactionStore!(transToAddMap.set(*to, newTransList))
+                                                                            }
+                                                                        }
+                                                                        else {
+                                                                            newTransListCh!([({
+                                                                                "from":*addr,
+                                                                                "to":*to,
+                                                                                "amount":*amount,
+                                                                                "timeStamp":*timeStamp
+                                                                            })])|
+                                                                            for(@newTransList <- newTransListCh) {
+                                                                                transactionStore!(transToAddMap.set(*to, newTransList))
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                            |
+                                                            ret!((true, ("Finished transfer of ", *amount, "REV to", *to, "result was:", result)))
+                                                        }
+                                                        (false, msg) => {
+                                                            ret!((false, "something wrong", msg))
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    |
+                    contract wallet(@"sendMessage", deployerId, to, msg, timeStamp, ret) = {
+                        for(@messagesToAddMap <- messageStore) {
+                            new addrCh, newMessageCh in {
+                                @{"walletStore"}!("getAddr", *deployerId, *addrCh)|
+                                for(@addr <- addrCh) {
+                                    newMessageCh!({
+                                        "from":addr,
+                                        "msg":*msg,
+                                        "timeStamp":*timeStamp
+                                    })|
+                                    for(@newMessage <- newMessageCh) {
+                                        new messageListCh, newMessageMapCh in {
+                                            messageListCh!(messagesToAddMap.get(*to))|
+                                            for(@messageList <- messageListCh) {
+                                                if (messageList != Nil) {
+                                                    newMessageMapCh!(messagesToAddMap.set(
+                                                        *to, (messageList++[(newMessage)])
+                                                    ))|
+                                                    for(@newMessageMap <- newMessageMapCh) {
+                                                        messageStore!(newMessageMap)|
+                                                        ret!((true, "send successfully."))
+                                                    }
+                                                }
+                                                else {
+                                                    newMessageMapCh!(messagesToAddMap.set(
+                                                        *to, ([(newMessage)])
+                                                    ))|
+                                                    for(@newMessageMap <- newMessageMapCh) {
+                                                        messageStore!(newMessageMap)|
+                                                        ret!((true, "send successfully."))
+                                                    }
+                                                }
+                                            }
+                                            
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    |
+                    contract wallet(@"checkTrans", deployerId, ret) = {
+                        for(@transactionsToAddMap <- transactionStore) {
+                            new addrCh, transOfThisCh in {
+                                @{"walletStore"}!("getAddr", *deployerId, *addrCh)|
+                                for(@addr <- addrCh) {
+                                    transOfThisCh!(transactionsToAddMap.get(addr))|
+                                    for(@transOfThis <- transOfThisCh) {
+                                        if (transOfThis != Nil) {
+                                            for(@trans <- walletTransactionsStore) {
+                                                ret!((true, (trans++transOfThis)))|
+                                                walletTransactionsStore!(trans++transOfThis)|
+                                                transactionStore!(transactionsToAddMap.delete(addr))
+                                            }
+                                        }
+                                        else {
+                                            for(@trans <- walletTransactionsStore) {
+                                                ret!((false, trans))|
+                                                walletTransactionsStore!(trans)|
+                                                transactionStore!(transactionsToAddMap)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    |
+                    contract wallet(@"checkMessage", deployerId, ret) = {
+                        //Todo
+                        for(@messagesToAddMap <- messageStore) {
+                            new addrCh, messagesOfThisCh in {
+                                @{"walletStore"}!("getAddr", *deployerId, *addrCh)|
+                                for(@addr <- addrCh) {
+                                    messagesOfThisCh!(messagesToAddMap.get(addr))|
+                                    for(@messagesOfThis <- messagesOfThisCh) {
+                                        if (messagesOfThis != Nil) {
+                                            ret!((true, messagesOfThis))|
+                                            messageStore!(messagesToAddMap.delete(addr))
+                                        }
+                                        else {
+                                            ret!((false, "nothing"))|
+                                            messageStore!(messagesToAddMap)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
